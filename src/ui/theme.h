@@ -3,33 +3,46 @@
 
 #include <vita2d.h>
 
-// Discord "Dark" theme palette (approximated from the desktop client).
-#define COL_GUILDBAR   RGBA8(0x1e, 0x1f, 0x22, 0xFF)
-#define COL_SIDEBAR    RGBA8(0x2b, 0x2d, 0x31, 0xFF)
-#define COL_CHAT       RGBA8(0x31, 0x33, 0x38, 0xFF)
-#define COL_TOPBAR     RGBA8(0x31, 0x33, 0x38, 0xFF)
-#define COL_ELEVATED   RGBA8(0x38, 0x3a, 0x40, 0xFF)  // inputs / cards
-#define COL_HOVER      RGBA8(0x35, 0x37, 0x3c, 0xFF)
-#define COL_SELECTED   RGBA8(0x40, 0x42, 0x49, 0xFF)
-#define COL_DIVIDER    RGBA8(0x3f, 0x41, 0x47, 0xFF)
+// Active color palette; the COL_* macros read these. See theme.c.
+typedef struct {
+    unsigned guildbar, sidebar, chat, topbar, elevated, hover, selected, divider;
+    unsigned text, text_bright, text_muted, text_link;
+    unsigned blurple, green, red, white;
+} cl_palette;
+extern cl_palette g_pal;
 
-#define COL_TEXT       RGBA8(0xdb, 0xde, 0xe1, 0xFF)
-#define COL_TEXT_BRIGHT RGBA8(0xf2, 0xf3, 0xf5, 0xFF)
-#define COL_TEXT_MUTED RGBA8(0x94, 0x9b, 0xa4, 0xFF)
-#define COL_TEXT_LINK  RGBA8(0x00, 0xa8, 0xfc, 0xFF)
+#define COL_GUILDBAR    (g_pal.guildbar)
+#define COL_SIDEBAR     (g_pal.sidebar)
+#define COL_CHAT        (g_pal.chat)
+#define COL_TOPBAR      (g_pal.topbar)
+#define COL_ELEVATED    (g_pal.elevated)
+#define COL_HOVER       (g_pal.hover)
+#define COL_SELECTED    (g_pal.selected)
+#define COL_DIVIDER     (g_pal.divider)
+#define COL_TEXT        (g_pal.text)
+#define COL_TEXT_BRIGHT (g_pal.text_bright)
+#define COL_TEXT_MUTED  (g_pal.text_muted)
+#define COL_TEXT_LINK   (g_pal.text_link)
+#define COL_BLURPLE     (g_pal.blurple)
+#define COL_GREEN       (g_pal.green)
+#define COL_RED         (g_pal.red)
+#define COL_WHITE       (g_pal.white)
 
-#define COL_BLURPLE    RGBA8(0x58, 0x65, 0xf2, 0xFF)
-#define COL_GREEN      RGBA8(0x23, 0xa5, 0x5a, 0xFF)  // online
-#define COL_RED        RGBA8(0xf2, 0x3f, 0x43, 0xFF)  // mention / error
-#define COL_WHITE      RGBA8(0xff, 0xff, 0xff, 0xFF)
+// Active type scale; the FS_* macros read these. Native px per size. See theme.c.
+enum { R_TINY, R_SMALL, R_CHANNEL, R_BODY, R_HEADER, R_TITLE, R_COUNT };
+extern int g_fs[R_COUNT];
+#define FS_TINY    (g_fs[R_TINY])
+#define FS_SMALL   (g_fs[R_SMALL])
+#define FS_CHANNEL (g_fs[R_CHANNEL])
+#define FS_BODY    (g_fs[R_BODY])
+#define FS_HEADER  (g_fs[R_HEADER])
+#define FS_TITLE   (g_fs[R_TITLE])
 
-// Type scale (pixel sizes).
-#define FS_TITLE   20
-#define FS_HEADER  18
-#define FS_BODY    17
-#define FS_CHANNEL 16
-#define FS_SMALL   14
-#define FS_TINY    12
+void theme_set(int which);        // 0 dark, 1 light (reapplies accent)
+void theme_set_accent(int idx);
+void font_set(int profile);       // 0 small, 1 medium, 2 large
+void theme_apply_all(void);       // apply theme + accent + font from g_settings
+int  theme_accent_count(void);
 
 #define SCREEN_W 960
 #define SCREEN_H 544

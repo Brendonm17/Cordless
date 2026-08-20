@@ -55,11 +55,13 @@ add_executable(${PROJECT_NAME}
   src/voice/dave_frame.c
   src/voice/dave.cpp
   src/model/store.c
+  src/model/settings.c
   src/ui/qr.c
   src/ui/ime.c
   src/ui/inlinekbd.c
   src/ui/photo.c
   src/ui/camera.c
+  src/ui/theme.c
   src/ui/ui.c
   src/ui/browser.c
   src/ui/imagecache.c

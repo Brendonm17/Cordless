@@ -26,6 +26,10 @@ void browser_ime_pump(void);
 // during a drag `tap` is false and `dy` is the vertical movement since last frame.
 void browser_touch(int x, int y, int dy, bool tap);
 
+// Reopen the last channel on launch when the Open To pref is set.
+// Called once, first frame after READY.
+void browser_apply_open_pref(void);
+
 // True once when the user tapped Log Out in Settings (clears the request).
 bool browser_wants_logout(void);
 

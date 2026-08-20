@@ -10,6 +10,7 @@
 #include "auth/tokenstore.h"
 #include "media/video_player.h"
 #include "model/store.h"
+#include "model/settings.h"
 #include "api/discord.h"
 #include "gateway/gateway.h"
 #include "voice/voice.h"
@@ -31,6 +32,8 @@ static long long now_ms(void)
     SceRtcTick t; sceRtcGetCurrentTick(&t);
     return (long long)(t.tick / 1000);
 }
+
+#define CL_VERSION "1.00"  // shown in Settings > About
 
 #define RAIL_W     72
 #define SIDE_X     RAIL_W
@@ -292,6 +295,11 @@ static int      s_set_cs_r[4];  // custom-status row hit rect
 static int      s_set_av_r[4], s_set_name_r[4];
 static int      s_set_sw_r[4];  // Switch Account button
 #define SET_BTN_H 34
+#define SET_ROW_H  30           // appearance setting row height
+#define SET_NAPP    7           // appearance setting rows
+static int      s_set_app_r[SET_NAPP][4];  // appearance row hit rects
+static int      s_set_scroll;              // settings modal scroll (tall content)
+static int      s_set_scroll_max;
 
 #define MAX_FORUM 32
 static bool     s_forum_view;
@@ -717,6 +725,12 @@ static void restore_last_view(void)
     }
     console_dbgf("[ui] restore last view g=%s c=%s -> %s", gid[0] ? gid : "(dm)", cid,
                  found ? "opened" : "not found");
+}
+
+// Reopen the last channel on launch when the Open To pref is set.
+void browser_apply_open_pref(void)
+{
+    if (g_settings.open_last == 1) restore_last_view();  // no-ops if nothing saved
 }
 
 // back out of a thread to its parent (forum -> post list, text -> channel);
@@ -1374,6 +1388,7 @@ static int me_prof_worker(SceSize sz, void *p)
 static void open_settings(void)
 {
     s_settings_open = true;
+    s_set_scroll = 0;
     s_me_bio[0] = '\0'; s_me_accent = 0; s_me_loading = true;
     SceUID th = sceKernelCreateThread("cl_me", me_prof_worker, 0x40, 0x100000, 0, SCE_KERNEL_CPU_MASK_USER_1, NULL);
     if (th >= 0) sceKernelStartThread(th, 0, NULL); else s_me_loading = false;
@@ -1908,8 +1923,8 @@ void browser_input(unsigned pressed, unsigned held, int ly)
     // compose is modal: ignore app buttons while the inline keyboard is up
     if (s_compose_active) return;
 
-    // first frame after READY: reopen the last-open view
-    if (!s_restored) { s_restored = true; restore_last_view(); }
+    // first frame after READY: restore the last view per the Open To pref
+    if (!s_restored) { s_restored = true; browser_apply_open_pref(); }
 
     int gcount = 0;
     store_lock();
@@ -2282,6 +2297,12 @@ void browser_touch(int x, int y, int dy, bool tap)
 
     // Settings is modal: buttons act; a tap outside the card closes.
     if (s_settings_open) {
+        if (!tap) {  // drag scrolls the (possibly tall) card
+            s_set_scroll -= dy;
+            if (s_set_scroll < 0) s_set_scroll = 0;
+            if (s_set_scroll > s_set_scroll_max) s_set_scroll = s_set_scroll_max;
+            return;
+        }
         if (tap) {
             bool inbtn = (x >= s_set_cx + 20 && x < s_set_cx + s_set_cw - 20);
             static const int scode[4] = { 1, 2, 3, 0 };
@@ -2298,6 +2319,10 @@ void browser_touch(int x, int y, int dy, bool tap)
                           y >= s_set_name_r[1] && y < s_set_name_r[1] + s_set_name_r[3]);
             bool in_sw = (x >= s_set_sw_r[0] && x < s_set_sw_r[0] + s_set_sw_r[2] &&
                           y >= s_set_sw_r[1] && y < s_set_sw_r[1] + s_set_sw_r[3]);
+            int app_hit = -1;
+            for (int i = 0; i < SET_NAPP; i++)
+                if (x >= s_set_app_r[i][0] && x < s_set_app_r[i][0] + s_set_app_r[i][2] &&
+                    y >= s_set_app_r[i][1] && y < s_set_app_r[i][1] + s_set_app_r[i][3]) app_hit = i;
             if (in_av) {
                 settings_change_avatar();
             } else if (in_nm) {
@@ -2313,6 +2338,20 @@ void browser_touch(int x, int y, int dy, bool tap)
                 ime_get_text("Custom status", s_me_custom, t, sizeof(t));
                 snprintf(s_me_custom, sizeof(s_me_custom), "%s", t);
                 gateway_set_custom_status(s_me_custom);
+            } else if (app_hit >= 0) {
+                // Cycle/toggle the setting, live-apply the visual ones, persist.
+                switch (app_hit) {
+                case 0: g_settings.theme ^= 1; theme_set(g_settings.theme); break;
+                case 1: g_settings.accent = (g_settings.accent + 1) % theme_accent_count();
+                        theme_set_accent(g_settings.accent); break;
+                case 2: g_settings.font_size = (g_settings.font_size + 1) % 3;
+                        font_set(g_settings.font_size); break;
+                case 3: g_settings.density ^= 1; break;
+                case 4: g_settings.clock_24h ^= 1; break;
+                case 5: g_settings.open_last ^= 1; break;
+                case 6: g_settings.low_battery ^= 1; break;
+                }
+                settings_save();
             } else if (inbtn && y >= s_set_eb_y && y < s_set_eb_y + SET_BTN_H) {
                 edit_bio();
             } else if (inbtn && y >= s_set_lo_y && y < s_set_lo_y + SET_BTN_H) {
@@ -3013,7 +3052,7 @@ static void draw_message_video(int x, int y, const message *m, int tw)
 static void draw_invite_tile(int x, int y, const message *m, int tw)
 {
     int w = tw < INV_TILE_W ? tw : INV_TILE_W, h = INV_TILE_H;
-    ui_rounded_rect(x, y, w, h, 8, RGBA8(0x2b, 0x2d, 0x31, 0xFF));
+    ui_rounded_rect(x, y, w, h, 8, COL_SIDEBAR);
     struct inv_entry *e = inv_get(m->invite_code);
     ui_text_bold(x + 12, y + 8, FS_TINY, COL_TEXT_MUTED, "YOU'VE BEEN INVITED TO JOIN A SERVER");
 
@@ -3039,7 +3078,7 @@ static void draw_invite_tile(int x, int y, const message *m, int tw)
             vita2d_draw_texture_scale(t, x, y, s, s);
             if (dhh > h) ui_rect(x, y + h, w, dhh - h, COL_CHAT);  // mask spill
             ui_rect(x, y, w, h, RGBA8(0x0e, 0x0f, 0x11, 0xC0));  // dim overlay
-            ui_rounded_rect(x, y, w, 18, 8, RGBA8(0x2b, 0x2d, 0x31, 0xFF));  // re-round top
+            ui_rounded_rect(x, y, w, 18, 8, COL_SIDEBAR);  // re-round top
             ui_text_bold(x + 12, y + 8, FS_TINY, COL_TEXT_MUTED, "YOU'VE BEEN INVITED TO JOIN A SERVER");
         }
     }
@@ -3157,8 +3196,8 @@ static void draw_embed(int x, int y, const message *m, int tw)
     unsigned bar = m->embed_color
         ? RGBA8((m->embed_color >> 16) & 0xFF, (m->embed_color >> 8) & 0xFF,
                 m->embed_color & 0xFF, 0xFF)
-        : RGBA8(0x4f, 0x54, 0x5c, 0xFF);
-    ui_rounded_rect(x, y, cw, h, 6, RGBA8(0x2b, 0x2d, 0x31, 0xFF));
+        : COL_TEXT_MUTED;  // neutral accent bar, adapts to theme
+    ui_rounded_rect(x, y, cw, h, 6, COL_SIDEBAR);
     ui_rect(x, y + 2, 4, h - 4, bar);  // accent bar
     embed_content(x + 14, y + 10, m, cw - 26, true);
 }
@@ -3180,7 +3219,7 @@ static void draw_poll(int x, int y, const message *m, int tw)
     if (!m->has_poll) return;
     int cw = tw < POLL_MAXW ? tw : POLL_MAXW;
     int h  = poll_height(m, tw);
-    ui_rounded_rect(x, y, cw, h, 8, RGBA8(0x2b, 0x2d, 0x31, 0xFF));
+    ui_rounded_rect(x, y, cw, h, 8, COL_SIDEBAR);
     int ix = x + 12, iy = y + 10, iw = cw - 24;
     ui_richtext_draw(ix, iy, FS_BODY, COL_TEXT_BRIGHT, m->poll_question, iw, 20);
     iy += ui_richtext_height(FS_BODY, m->poll_question, iw, 20) + 8;
@@ -3192,7 +3231,7 @@ static void draw_poll(int x, int y, const message *m, int tw)
         ui_rounded_rect(ix, iy, iw, POLL_ROW_H, 6, COL_ELEVATED);
         if (barw > 6)
             ui_rounded_rect(ix, iy, barw, POLL_ROW_H, 6,
-                            m->poll_answers[i].me ? COL_BLURPLE : RGBA8(0x3c,0x40,0x58,0xFF));
+                            m->poll_answers[i].me ? COL_BLURPLE : COL_SELECTED);
         char pc[8]; snprintf(pc, sizeof(pc), "%d%%", pct);
         ui_text(ix + iw - ui_text_w(FS_SMALL, pc) - 10, iy + 7, FS_SMALL, COL_TEXT_BRIGHT, pc);
         ui_text_clip(ix + 10, iy + 7, FS_SMALL, COL_TEXT,
@@ -3232,7 +3271,7 @@ static int draw_reactions(int x, int y, const message *m, int tw, bool draw)
         int pw = reaction_pill_w(r);
         if (cx + pw > x + tw && cx > x) { cx = x; cy += RX_H + RX_GAP; rows++; }
         if (draw) {
-            unsigned bg = r->me ? RGBA8(0x3c,0x40,0x58,0xFF) : COL_ELEVATED;
+            unsigned bg = r->me ? COL_SELECTED : COL_ELEVATED;  // themed so light reads
             ui_rounded_rect(cx, cy, pw, RX_H, 8, bg);
             if (r->me) {  // blurple outline when you reacted
                 ui_rect(cx, cy, pw, 1, COL_BLURPLE);
@@ -3287,13 +3326,19 @@ static void draw_status_dot(int cx, int cy, int status, unsigned ring)
     vita2d_draw_fill_circle(cx, cy, 3, dot);
 }
 
-// Extract "HH:MM" from a Discord ISO8601 timestamp (UTC).
+// ISO8601 UTC time -> "HH:MM" (24h) or "h:MM AM/PM" (12h). out needs >= 12 bytes.
 static void hhmm(const char *ts, char *out)
 {
     out[0] = '\0';
-    if (ts && strlen(ts) >= 16 && ts[10] == 'T') {
-        out[0] = ts[11]; out[1] = ts[12]; out[2] = ':';
-        out[3] = ts[14]; out[4] = ts[15]; out[5] = '\0';
+    if (!ts || strlen(ts) < 16 || ts[10] != 'T') return;
+    int h = (ts[11]-'0')*10 + (ts[12]-'0');
+    int m = (ts[14]-'0')*10 + (ts[15]-'0');
+    if (h < 0 || h > 23 || m < 0 || m > 59) return;
+    if (g_settings.clock_24h) {
+        snprintf(out, 12, "%02d:%02d", h, m);
+    } else {
+        int h12 = h % 12; if (h12 == 0) h12 = 12;
+        snprintf(out, 12, "%d:%02d %s", h12, m, h < 12 ? "AM" : "PM");
     }
 }
 
@@ -3353,14 +3398,14 @@ static void draw_date_divider(int x, int y, int w, const char *label)
 // right, drawn just above the first message the user hasn't read yet.
 static void draw_unread_divider(int x, int y, int w)
 {
-    unsigned red = RGBA8(0xf2,0x3f,0x42,0xFF);
+    unsigned red = COL_RED;
     int midy = y + UNREAD_H/2;
     ui_rect(x + 12, midy, w - 24, 1, red);
     const char *nw = "NEW";
     int lw = ui_text_w(FS_TINY, nw);
     int bx = x + w - lw - 20;
     ui_rect(bx - 5, y + 1, lw + 10, UNREAD_H - 2, red);  // tag chip
-    ui_text(bx, midy - 8, FS_TINY, RGBA8(0xff,0xff,0xff,0xFF), nw);
+    ui_text(bx, midy - 8, FS_TINY, COL_WHITE, nw);
 }
 
 // DM/Home right panel: friends with live presence (from the global presence
@@ -3630,7 +3675,13 @@ static void draw_messages(void)
     int pane_top = TOPBAR_H + 8;
     int pane_bot = SCREEN_H - 52;  // leave room for the compose bar
     int pane_h = pane_bot - pane_top;
-    int txt_x = g_msg_x + 64;  // text column (after avatar)
+    // Density: compact hides the avatar (author drawn inline) and tightens spacing.
+    int compact = (g_settings.density == 1);
+    int line_h  = compact ? 18 : 22;   // message body line spacing
+    int hdr_h   = compact ? 18 : 22;   // author line -> first content line
+    int blk_pad = compact ? 3  : 8;    // trailing pad under a header block
+    int grp_pad = compact ? 2  : 4;    // trailing pad under a grouped message
+    int txt_x = g_msg_x + (compact ? 16 : 64);  // text column (after avatar)
     int tw = msg_right - txt_x - 16;
 
     store_lock();
@@ -3656,10 +3707,11 @@ static void draw_messages(void)
     static bool     s_udiv[MAX_MESSAGES];  // the NEW/unread divider precedes message i
     static unsigned s_bh_rev = 0xFFFFFFFFu;
     static int      s_bh_tw = -1;
+    static int      s_bh_fs = -1;   // font size baked into the cached heights
     unsigned rev = store_msg_rev();
-    bool changed = (rev != s_bh_rev) || (tw != s_bh_tw);
+    bool changed = (rev != s_bh_rev) || (tw != s_bh_tw) || (FS_BODY != s_bh_fs);
     if (changed) {
-        s_bh_tw = tw;
+        s_bh_tw = tw; s_bh_fs = FS_BODY;
         const char *pa = "";
         for (int i = 0; i < mc; i++) {
             bool blk = store_is_blocked(msgs[i].author_id);
@@ -3676,7 +3728,7 @@ static void draw_messages(void)
                         (i == 0 || !snowflake_gt(msgs[i-1].id, s_unread_boundary));
             if (s_udiv[i]) grp = false;
             int wrap = msgs[i].content[0]
-                       ? ui_richtext_height(FS_BODY, msgs[i].content, tw, 22) : 0;
+                       ? ui_richtext_height(FS_BODY, msgs[i].content, tw, line_h) : 0;
             s_texth[i] = wrap;  // reused by the draw pass
             int imgh = 0;
             if (msgs[i].has_embed) imgh += embed_height(&msgs[i], tw) + 8;
@@ -3687,9 +3739,9 @@ static void draw_messages(void)
             if (msgs[i].has_poll) imgh += poll_height(&msgs[i], tw) + 8;
             if (msgs[i].reaction_count)
                 imgh += draw_reactions(0, 0, &msgs[i], tw, false) + 8;
-            if (sys) s_bh[i] = 28;
-            else if (grp) s_bh[i] = wrap + imgh + 4;
-            else s_bh[i] = (msgs[i].is_reply ? 20 : 0) + 22 + wrap + imgh + 8;
+            if (sys) s_bh[i] = compact ? 22 : 28;
+            else if (grp) s_bh[i] = wrap + imgh + grp_pad;
+            else s_bh[i] = (msgs[i].is_reply ? 20 : 0) + hdr_h + wrap + imgh + blk_pad;
             if (s_div[i]) s_bh[i] += DIVIDER_H;
             if (s_udiv[i]) s_bh[i] += UNREAD_H;
             pa = sys ? "" : msgs[i].author;
@@ -3802,7 +3854,7 @@ static void draw_messages(void)
                 int cy = y;
                 if (msgs[i].content[0]) {
                     ui_set_spoiler_reveal(spoiler_shown(msgs[i].id));
-                    ui_richtext_draw(txt_x, cy, FS_BODY, COL_TEXT, msgs[i].content, tw, 22);
+                    ui_richtext_draw(txt_x, cy, FS_BODY, COL_TEXT, msgs[i].content, tw, line_h);
                     ui_set_spoiler_reveal(true);
                     cy += s_texth[i];  // cached; don't re-measure
                 }
@@ -3828,10 +3880,16 @@ static void draw_messages(void)
                 int my = y;
                 if (msgs[i].is_reply) {
                     // reply preview line + a small connector hook to the avatar
-                    int cxp = g_msg_x + 44;
-                    ui_rect(cxp, y + 8, 2, 14, COL_DIVIDER);
-                    ui_rect(cxp, y + 8, 18, 2, COL_DIVIDER);
-                    int rx = cxp + 24;
+                    // compact: no avatar, preview at the text column
+                    int rx;
+                    if (compact) {
+                        rx = txt_x;
+                    } else {
+                        int cxp = g_msg_x + 44;
+                        ui_rect(cxp, y + 8, 2, 14, COL_DIVIDER);
+                        ui_rect(cxp, y + 8, 18, 2, COL_DIVIDER);
+                        rx = cxp + 24;
+                    }
                     ui_text_bold(rx, y, FS_SMALL, COL_TEXT, msgs[i].reply_author);
                     int raw = ui_text_bold_w(FS_SMALL, msgs[i].reply_author);
                     ui_text_clip(rx + raw + 8, y, FS_SMALL, COL_TEXT_MUTED,
@@ -3854,9 +3912,11 @@ static void draw_messages(void)
                 // history, which omits member.nick); else the stored name.
                 const char *dispname = store_member_nick(msgs[i].author_id);
                 if (!dispname || !dispname[0]) dispname = msgs[i].author;
-                draw_avatar(g_msg_x + 16 + 18, my + 18, 18, aurl, dispname, COL_BLURPLE);
-                draw_status_dot(g_msg_x + 16 + 18 + 12, my + 18 + 12,
-                                store_member_status(msgs[i].author_id), COL_CHAT);
+                if (!compact) {  // cozy: circular avatar + presence dot in the left gutter
+                    draw_avatar(g_msg_x + 16 + 18, my + 18, 18, aurl, dispname, COL_BLURPLE);
+                    draw_status_dot(g_msg_x + 16 + 18 + 12, my + 18 + 12,
+                                    store_member_status(msgs[i].author_id), COL_CHAT);
+                }
                 ui_text_bold(txt_x, my, FS_CHANNEL, COL_TEXT_BRIGHT, dispname);
                 int aw = ui_text_bold_w(FS_CHANNEL, dispname);
                 int hx = txt_x + aw + 10;
@@ -3866,15 +3926,15 @@ static void draw_messages(void)
                     ui_text_bold(hx + 4, my + 1, FS_TINY, COL_WHITE, "BOT");
                     hx += bw + 8;
                 }
-                char tm[8]; hhmm(msgs[i].timestamp, tm);
+                char tm[12]; hhmm(msgs[i].timestamp, tm);
                 if (tm[0]) { ui_text(hx, my + 4, FS_TINY, COL_TEXT_MUTED, tm);
                              hx += ui_text_w(FS_TINY, tm) + 8; }
                 if (msgs[i].edited)
                     ui_text(hx, my + 4, FS_TINY, COL_TEXT_MUTED, "(edited)");
-                int cy = my + 22;
+                int cy = my + hdr_h;
                 if (msgs[i].content[0]) {
                     ui_set_spoiler_reveal(spoiler_shown(msgs[i].id));
-                    ui_richtext_draw(txt_x, cy, FS_BODY, COL_TEXT, msgs[i].content, tw, 22);
+                    ui_richtext_draw(txt_x, cy, FS_BODY, COL_TEXT, msgs[i].content, tw, line_h);
                     ui_set_spoiler_reveal(true);
                     cy += s_texth[i];  // cached; don't re-measure
                 }
@@ -3949,7 +4009,7 @@ static void draw_messages(void)
     if (s_jump_show) {
         int jx = msg_right - 34, jy = pane_bot - 20;
         vita2d_draw_fill_circle(jx, jy, 18, COL_ELEVATED);
-        vita2d_draw_fill_circle(jx, jy, 17, RGBA8(0x2b,0x2d,0x31,0xFF));
+        vita2d_draw_fill_circle(jx, jy, 17, COL_SIDEBAR);
         ui_text_bold(jx - 6, jy - 11, FS_BODY, COL_TEXT_BRIGHT, "\xE2\x86\x93");  // down arrow
         s_jump_r[0] = jx; s_jump_r[1] = jy; s_jump_r[2] = 18;
     }
@@ -4295,13 +4355,23 @@ static void draw_settings(void)
         bioH = lh;
     }
 
-    // Section heights -> total card height (centered).
+    // Section heights -> total card height. Tall content scrolls behind the dim.
     const int headerH = 154;
-    int aboutH   = 6 + 18 + bioH;
-    int statusH  = 12 + 18 + 30 + 8 + 30;
-    int buttonsH = 12 + SET_BTN_H + 10 + SET_BTN_H + 14;
-    int ch = headerH + aboutH + statusH + buttonsH;
-    int cx = (SCREEN_W - cw) / 2, cy = (SCREEN_H - ch) / 2;
+    int aboutH    = 6 + 18 + bioH;
+    int statusH   = 12 + 18 + 30 + 8 + 30;
+    int appearH   = 12 + 18 + SET_NAPP * (SET_ROW_H + 6);  // label + 7 rows
+    int aboutAppH = 12 + 18 + 18 + 16;                     // label + 2 text lines
+    int buttonsH  = 12 + SET_BTN_H + 10 + SET_BTN_H + 14;
+    int ch = headerH + aboutH + statusH + appearH + aboutAppH + buttonsH;
+    int cx = (SCREEN_W - cw) / 2, cy;
+    const int SET_MARGIN = 8, avail = SCREEN_H - 2 * SET_MARGIN;
+    if (ch <= avail) { cy = (SCREEN_H - ch) / 2; s_set_scroll_max = 0; }
+    else {
+        s_set_scroll_max = ch - avail;
+        if (s_set_scroll < 0) s_set_scroll = 0;
+        if (s_set_scroll > s_set_scroll_max) s_set_scroll = s_set_scroll_max;
+        cy = SET_MARGIN - s_set_scroll;
+    }
     s_set_cx = cx; s_set_cy = cy; s_set_cw = cw; s_set_ch = ch;
     ui_rounded_rect(cx, cy, cw, ch, 12, COL_SIDEBAR);
 
@@ -4348,6 +4418,45 @@ static void draw_settings(void)
                  s_me_custom[0] ? s_me_custom : "Set a custom status\xE2\x80\xA6", cw - 60);
     s_set_cs_r[0] = cx + 20; s_set_cs_r[1] = y; s_set_cs_r[2] = cw - 40; s_set_cs_r[3] = 30;
     y += 30;
+
+    // APPEARANCE: app-local look + behavior. Tapping a row cycles its setting.
+    y += 12;
+    ui_text(cx + 20, y, FS_TINY, COL_TEXT_MUTED, "APPEARANCE");
+    y += 18;
+    static const char *fs_lab[3] = { "Small", "Medium", "Large" };
+    char av[SET_NAPP][20];
+    snprintf(av[0], 20, "%s", g_settings.theme ? "Light" : "Dark");
+    av[1][0] = '\0';  // accent draws a swatch, not text
+    snprintf(av[2], 20, "%s", fs_lab[g_settings.font_size % 3]);
+    snprintf(av[3], 20, "%s", g_settings.density ? "Compact" : "Cozy");
+    snprintf(av[4], 20, "%s", g_settings.clock_24h ? "24-hour" : "12-hour");
+    snprintf(av[5], 20, "%s", g_settings.open_last ? "Last channel" : "Home");
+    snprintf(av[6], 20, "%s", g_settings.low_battery ? "On" : "Off");
+    static const char *app_lab[SET_NAPP] = {
+        "Theme", "Accent", "Font Size", "Density", "Clock", "Open To", "Low Battery" };
+    for (int i = 0; i < SET_NAPP; i++) {
+        ui_rounded_rect(cx + 20, y, cw - 40, SET_ROW_H, 6, COL_ELEVATED);
+        ui_text(cx + 30, y + 8, FS_SMALL, COL_TEXT, app_lab[i]);
+        if (i == 1) {  // accent swatch (COL_BLURPLE tracks the active accent)
+            int sw = 46, sh = SET_ROW_H - 12;
+            ui_rounded_rect(cx + 20 + (cw - 40) - sw - 10, y + 6, sw, sh, 4, COL_BLURPLE);
+        } else {
+            int vw = ui_text_w(FS_SMALL, av[i]);
+            ui_text(cx + 20 + (cw - 40) - vw - 10, y + 8, FS_SMALL, COL_TEXT_BRIGHT, av[i]);
+        }
+        s_set_app_r[i][0] = cx + 20; s_set_app_r[i][1] = y;
+        s_set_app_r[i][2] = cw - 40; s_set_app_r[i][3] = SET_ROW_H;
+        y += SET_ROW_H + 6;
+    }
+
+    // ABOUT: static app info.
+    y += 12;
+    ui_text(cx + 20, y, FS_TINY, COL_TEXT_MUTED, "ABOUT");
+    y += 18;
+    ui_text_bold(cx + 20, y, FS_SMALL, COL_TEXT_BRIGHT, "Cordless " CL_VERSION);
+    y += 18;
+    ui_text(cx + 20, y, FS_TINY, COL_TEXT_MUTED, "Log: ux0:data/cordless/log.txt");
+    y += 16;
 
     y += 12;
     s_set_eb_y = y;
@@ -4418,7 +4527,7 @@ static void draw_pins(void)
     } else {
         for (int i = 0; i < s_pins_count && y < cy + ch - 40; i++) {
             message *m = &s_pins[i];
-            char tm[8]; hhmm(m->timestamp, tm);
+            char tm[12]; hhmm(m->timestamp, tm);
             ui_text_bold(cx + 16, y, FS_SMALL, COL_TEXT_BRIGHT, m->author);
             int aw = ui_text_bold_w(FS_SMALL, m->author);
             if (tm[0]) ui_text(cx + 16 + aw + 8, y + 2, FS_TINY, COL_TEXT_MUTED, tm);
@@ -4802,7 +4911,7 @@ static void draw_toast(void)
     int tw = ui_wrap_height(FS_SMALL, s_toast, maxw, 18);  // height
     int bw = maxw + pad * 2, bh = tw + pad * 2;
     int bx = g_msg_x + (SCREEN_W - g_msg_x - bw) / 2, by = SCREEN_H - 60 - bh;
-    ui_rounded_rect(bx, by, bw, bh, 8, RGBA8(0x1a, 0x1b, 0x1e, 0xF2));
+    ui_rounded_rect(bx, by, bw, bh, 8, COL_SIDEBAR);
     ui_rect(bx, by, 3, bh, COL_BLURPLE);
     ui_text_wrapped(bx + pad, by + pad, FS_SMALL, COL_TEXT_BRIGHT, s_toast, maxw, 18);
 }

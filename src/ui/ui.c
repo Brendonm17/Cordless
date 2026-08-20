@@ -14,12 +14,12 @@ static char s_reg_path[256], s_semi_path[256];
 static vita2d_font *s_base_reg, *s_base_semi;
 static vita2d_pvf  *s_pad_pvf;
 
-#define FONT_MAX_SLOTS 24
+#define FONT_MAX_SLOTS 32
 static struct { int size; bool bold; vita2d_font *f; } s_fslots[FONT_MAX_SLOTS];
 static int s_nfslots;
 
-// theme.h FS_* sizes
-static const int s_ui_sizes[] = { 12, 14, 16, 17, 18, 20 };
+// Every FS_* size across the S/M/L profiles, pre-rasterized so switching is instant.
+static const int s_ui_sizes[] = { 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24 };
 
 static vita2d_font *font_for(int size, bool bold)
 {

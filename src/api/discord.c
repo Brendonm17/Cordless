@@ -1,6 +1,7 @@
 #include "api/discord.h"
 #include "util/b64.h"
 #include "model/store.h"
+#include "model/settings.h"  // g_settings.clock_24h for timestamp formatting
 #include "net_common.h"
 #include "console.h"
 
@@ -253,11 +254,15 @@ static void resolve_mentions(const char *raw, json_t *mentions, char *out, size_
                         snprintf(rep, sizeof(rep), "@%s", nm ? nm : "user");
                         is_mention = 1; }
                 } else if (p[1] == 't' && p[2] == ':') {
-                    // <t:unix:style> timestamp -> HH:MM UTC.
+                    // <t:unix:style> timestamp -> time-of-day UTC, 12/24h per settings.
                     long long ts = 0; const char *q = p + 3;
                     while (q < end && *q >= '0' && *q <= '9') ts = ts * 10 + (*q++ - '0');
                     if (ts > 0) { int s = (int)(ts % 86400);
-                        snprintf(rep, sizeof(rep), "%02d:%02d", s / 3600, (s % 3600) / 60); }
+                        int hr = s / 3600, mn = (s % 3600) / 60;
+                        if (g_settings.clock_24h)
+                            snprintf(rep, sizeof(rep), "%02d:%02d", hr, mn);
+                        else { int h12 = hr % 12; if (h12 == 0) h12 = 12;  // 0->12, 13..23->1..11
+                            snprintf(rep, sizeof(rep), "%d:%02d %s", h12, mn, hr < 12 ? "AM" : "PM"); } }
                 }
                 if (rep[0]) {
                     int wrap = mark && is_mention;  // pill sentinels \x01..\x02

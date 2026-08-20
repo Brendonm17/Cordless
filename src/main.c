@@ -30,6 +30,7 @@
 #include "api/discord.h"
 #include "gateway/gateway.h"
 #include "model/store.h"
+#include "model/settings.h"
 #include "ui/browser.h"
 #include "qrcodegen.h"
 
@@ -319,6 +320,7 @@ int main(void)
     net_app_path(fsemi,  sizeof(fsemi),  "data/fonts/Inter-SemiBold.ttf");
     net_app_path(fatlas, sizeof(fatlas), "data/emoji_atlas.png");
     if (!ui_init(freg, fsemi, fatlas)) console_logf("ui_init: font load FAILED");
+    settings_load();  // load settings + apply theme/font before first draw
 
     console_dbgf("Cordless booting...");
     // Bring up sceNet + net_lock before imagecache_init spawns its TLS worker.
@@ -517,7 +519,7 @@ int main(void)
                              pad.lx < 96 || pad.lx > 160 || pad.ly < 96 || pad.ly > 160 ||
                              tw_down;
             unsigned rev = store_msg_rev();
-            bool need = had_input || browser_wants_redraw() ||
+            bool need = !g_settings.low_battery || had_input || browser_wants_redraw() ||
                         imagecache_animating() || imagecache_uploaded() ||
                         rev != s_last_rev || (frame - s_last_draw_f) >= 9;
             if (!need) { sceKernelDelayThread(16000); browser_ime_pump(); continue; }
