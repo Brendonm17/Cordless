@@ -51,3 +51,5 @@ license: mbedTLS (Apache-2.0), mlspp (BSD-2, (c) Cisco), jsmn (MIT), stb_image
 (public domain), QR-Code-generator (MIT, (c) Nayuki), the Inter font (OFL 1.1),
 Twemoji artwork (CC-BY 4.0), and the Mozilla CA bundle (MPL-2.0). The photo and
 camera dialog layouts are adapted from LifeLua.
+
+Disclosure: AI was used for API research and live area assets.
