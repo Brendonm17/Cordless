@@ -1,0 +1,12 @@
+# Build output
+/build/
+*.velf
+*.self
+*.vpk
+*.elf
+param.sfo
+
+# Editor / OS
+.vscode/
+*.swp
+.DS_Store
