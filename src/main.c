@@ -511,7 +511,7 @@ int main(void)
             continue;
         }
 
-        // Idle-redraw skip: redraw home only on input, change, or animation (~150ms heartbeat).
+        // Idle skip: redraw home only on input, change, or animation.
         if (g_state == ST_HOME && store_ready()) {
             static unsigned s_last_rev = 0;
             static int      s_last_draw_f = 0;
@@ -522,7 +522,12 @@ int main(void)
             bool need = !g_settings.low_battery || had_input || browser_wants_redraw() ||
                         imagecache_animating() || imagecache_uploaded() ||
                         rev != s_last_rev || (frame - s_last_draw_f) >= 9;
-            if (!need) { sceKernelDelayThread(16000); browser_ime_pump(); continue; }
+            if (!need) {
+                // Live front-touch read (peek goes stale while skipping); paces us too.
+                SceTouchData tdw;
+                sceTouchRead(SCE_TOUCH_PORT_FRONT, &tdw, 1);
+                if (tdw.reportNum == 0) { browser_ime_pump(); continue; }
+            }
             s_last_rev = rev; s_last_draw_f = frame;
         }
 
