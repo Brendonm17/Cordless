@@ -3917,7 +3917,9 @@ static void draw_messages(void)
                     draw_status_dot(g_msg_x + 16 + 18 + 12, my + 18 + 12,
                                     store_member_status(msgs[i].author_id), COL_CHAT);
                 }
-                ui_text_bold(txt_x, my, FS_CHANNEL, COL_TEXT_BRIGHT, dispname);
+                discord_profile_extra extra; extra.n_guilds = 0; extra.n_roles = 0;
+                discord_get_user_profile(msgs[i].author_id, msgs[i].guild_id, s_token, s_cacert, NULL, 0, NULL, &extra);
+                ui_text_bold(txt_x, my, FS_CHANNEL, store_role_color(extra.role_ids[0]), dispname);
                 int aw = ui_text_bold_w(FS_CHANNEL, dispname);
                 int hx = txt_x + aw + 10;
                 if (msgs[i].is_bot) {  // blurple BOT tag
