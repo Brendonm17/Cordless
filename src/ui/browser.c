@@ -3917,7 +3917,9 @@ static void draw_messages(void)
                     draw_status_dot(g_msg_x + 16 + 18 + 12, my + 18 + 12,
                                     store_member_status(msgs[i].author_id), COL_CHAT);
                 }
-                ui_text_bold(txt_x, my, FS_CHANNEL, COL_TEXT_BRIGHT, dispname);
+                discord_profile_extra extra; extra.n_guilds = 0; extra.n_roles = 0;
+                discord_get_user_profile(msgs[i].author_id, msgs[i].guild_id, s_token, s_cacert, NULL, 0, NULL, &extra);
+                ui_text_bold(txt_x, my, FS_CHANNEL, store_role_color(extra.role_ids[0]), dispname);
                 int aw = ui_text_bold_w(FS_CHANNEL, dispname);
                 int hx = txt_x + aw + 10;
                 if (msgs[i].is_bot) {  // blurple BOT tag
@@ -4525,6 +4527,8 @@ static void draw_pins(void)
     } else if (s_pins_count == 0) {
         ui_text(cx + 16, y, FS_SMALL, COL_TEXT_MUTED, "No pinned messages.");
     } else {
+        vita2d_enable_clipping();
+        vita2d_set_clip_rectangle(cx, y, cx + cw, y + ch);
         for (int i = 0; i < s_pins_count && y < cy + ch - 40; i++) {
             message *m = &s_pins[i];
             char tm[12]; hhmm(m->timestamp, tm);
@@ -4542,12 +4546,13 @@ static void draw_pins(void)
             ui_rect(cx + 16, y, cw - 32, 1, COL_DIVIDER);
             y += 8;
         }
+        vita2d_disable_clipping();
     }
 }
 
 // Full-screen image viewer (tap an inline image).
 static void draw_lightbox(void)
-{
+{ // to maybe do: replace current lightbox with the photo review dialog?
     if (!s_lightbox_open) return;
     ui_rect(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 0xE6));
     vita2d_texture *t = s_lightbox_url[0] ? imagecache_get_anim(s_lightbox_url, now_ms()) : NULL;
