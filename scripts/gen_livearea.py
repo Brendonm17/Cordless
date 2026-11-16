@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONTS = os.path.join(ROOT, "assets", "fonts")
+MARK_PATH = os.path.join(ROOT, "assets", "vita_clyde_mark.png")
 OUT_SCE = os.path.join(ROOT, "sce_sys")
 OUT_LA = os.path.join(OUT_SCE, "livearea", "contents")
 
@@ -23,8 +24,30 @@ CARD      = (49, 51, 56)       # #313338
 WHITE     = (255, 255, 255)
 MUTED     = (168, 173, 182)
 
+GINTO_PATHS = (
+    os.path.join(FONTS, "GintoNord-Black.ttf"),
+    os.path.expanduser("~/Library/Fonts/625933f807781e4a4303f1cb_Ginto Nord Black.ttf"),
+    "/Library/Fonts/625933f807781e4a4303f1cb_Ginto Nord Black.ttf",
+)
+
 def semi(sz): return ImageFont.truetype(os.path.join(FONTS, "Inter-SemiBold.ttf"), sz)
 def reg(sz):  return ImageFont.truetype(os.path.join(FONTS, "Inter-Regular.ttf"), sz)
+
+def ginto(sz):
+    for p in GINTO_PATHS:
+        if os.path.exists(p):
+            return ImageFont.truetype(p, sz)
+    return semi(sz)
+
+def clyde_mark(target_w, color=WHITE):
+    """Load the extracted Vita-Clyde mark scaled to target_w and tinted to color."""
+    src = Image.open(MARK_PATH).convert("RGBA")
+    mw = max(1, int(round(target_w)))
+    mh = max(1, int(round(mw * src.height / src.width)))
+    resized = src.resize((mw, mh), Image.LANCZOS)
+    tinted = Image.new("RGBA", (mw, mh), color + (0,))
+    tinted.putalpha(resized.getchannel("A"))
+    return tinted
 
 def vgrad(w, h, top, bot):
     img = Image.new("RGB", (w, h))
@@ -79,59 +102,62 @@ def save_indexed(img, path):
     img.convert("RGB").quantize(colors=256).save(path, optimize=True)
 
 def logo_tile(s):
-    """RGBA rounded-square blurple app-icon tile (white speech bubble + dots),
+    """RGBA rounded-square blurple app-icon tile (Vita-Clyde mark),
     transparent outside the rounded corners so it can be pasted onto any bg."""
-    tile = vgrad(s, s, BLURPLE_L, BLURPLE_D).convert("RGBA")
-    d = ImageDraw.Draw(tile, "RGBA")
-    bw, bh = s * 0.54, s * 0.42
-    cx, cy = s * 0.5, s * 0.46
-    box = [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2]
-    bubble(d, box, WHITE, radius=int(bh * 0.42))
-    dots(d, cx, (box[1] + box[3]) / 2, s * 0.052, s * 0.155, BLURPLE)
+    tile = Image.new("RGBA", (s, s), BLURPLE + (255,))
+    mark = clyde_mark(s * 0.78, WHITE)
+    tile.alpha_composite(mark, ((s - mark.width) // 2, (s - mark.height) // 2))
     mask = Image.new("L", (s, s), 0)
     ImageDraw.Draw(mask).rounded_rectangle([0, 0, s - 1, s - 1], radius=int(s * 0.235), fill=255)
     tile.putalpha(mask)
     return tile
 
-# --- icon0.png : 128x128 blurple tile + white chat bubble ------------------
+# --- icon0.png : 128x128 full-bleed blurple + white Vita-Clyde mark ---------
 def make_icon(path, S=128, ss=4):
     W = S * ss
-    img = vgrad(W, W, BLURPLE_L, BLURPLE_D)   # blurple tile
-    d = ImageDraw.Draw(img, "RGBA")
-    # Centered white bubble, ~46% wide.
-    cx, cy = W * 0.50, W * 0.46
-    bw, bh = W * 0.46, W * 0.34
-    box = [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2]
-    bubble(d, box, WHITE, radius=int(bh * 0.42))
-    dots(d, cx, (box[1] + box[3]) / 2, W * 0.045, W * 0.135, BLURPLE)
+    img = Image.new("RGBA", (W, W), BLURPLE + (255,))
+    mark = clyde_mark(W * 0.78, WHITE)
+    img.alpha_composite(mark, ((W - mark.width) // 2, (W - mark.height) // 2))
     save_indexed(img.resize((S, S), Image.LANCZOS), path)
 
-# --- startup.png : 280x158 launch tile ---
+# --- startup.png : 280x158 LiveArea cover (mark + "Cordless" wordmark) ----
 def make_startup(path, W=280, H=158, ss=4):
-    # Branded splash: blurple hero tile with a centered white bubble mark.
     w, h = W * ss, H * ss
-    # diagonal gradient, blurple to indigo
-    img = dgrad(w, h, (126, 138, 252), (48, 54, 140)).convert("RGBA")
-    # faint big bubble off the top-right
-    tex = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    bubble(ImageDraw.Draw(tex), [w * 0.64, -h * 0.22, w * 1.2, h * 0.5],
-           (255, 255, 255, 255), radius=int(h * 0.16), tail='left')
-    tex.putalpha(tex.getchannel("A").point(lambda a: int(a * 0.07)))
-    img.alpha_composite(tex)
-    # soft spotlight behind the mark
-    img.alpha_composite(glow((w, h), w * 0.5, h * 0.40, h * 0.58, (206, 214, 255), 62))
-    d = ImageDraw.Draw(img, "RGBA")
-    # centered hero mark
-    bw, bh = w * 0.40, h * 0.46
-    cx, cy = w * 0.5, h * 0.42
-    box = [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2]
-    # drop shadow behind the bubble
+    img = dgrad(w, h, (118, 130, 250), (56, 64, 174)).convert("RGBA")
+    img.alpha_composite(glow((w, h), w * 0.50, h * 0.50, h * 0.65, (206, 214, 255), 48))
+
+    # Subtle background watermark on the right edge
+    wm = clyde_mark(w * 0.52, WHITE)
+    wm.putalpha(wm.getchannel("A").point(lambda a: int(a * 0.07)))
+    img.alpha_composite(wm, (int(w * 0.68), -int(h * 0.14)))
+
+    # Horizontal lockup matching Discord's logo lockup: [Vita-Clyde]  Cordless
+    font = ginto(int(h * 0.18))
+    probe = ImageDraw.Draw(img, "RGBA")
+    tb = probe.textbbox((0, 0), "Cordless", font=font)
+    tw, th = tb[2] - tb[0], tb[3] - tb[1]
+
+    mark = clyde_mark(w * 0.20, WHITE)
+    gap = int(w * 0.036)
+    total_w = mark.width + gap + tw
+    x0 = (w - total_w) // 2
+    cy = h // 2
+    mx = x0
+    my = cy - mark.height // 2
+    tx = x0 + mark.width + gap - tb[0]
+    ty = cy - (tb[1] + tb[3]) // 2
+
+    # Drop shadow behind mark + text
     sh = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    bubble(ImageDraw.Draw(sh), [box[0], box[1] + h * 0.04, box[2], box[3] + h * 0.04],
-           (18, 20, 54, 170), radius=int(bh * 0.42))
-    img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(h * 0.035)))
-    bubble(d, box, WHITE, radius=int(bh * 0.42))
-    dots(d, cx, (box[1] + box[3]) / 2, h * 0.044, h * 0.135, BLURPLE)
+    dy = max(2, int(h * 0.022))
+    sh_mark = clyde_mark(mark.width, (18, 20, 54))
+    sh_mark.putalpha(sh_mark.getchannel("A").point(lambda a: int(a * 0.65)))
+    sh.alpha_composite(sh_mark, (mx, my + dy))
+    ImageDraw.Draw(sh, "RGBA").text((tx, ty + dy), "Cordless", font=font, fill=(18, 20, 54, 165))
+    img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(h * 0.025)))
+
+    img.alpha_composite(mark, (mx, my))
+    ImageDraw.Draw(img, "RGBA").text((tx, ty), "Cordless", font=font, fill=WHITE)
     save_indexed(img.resize((W, H), Image.LANCZOS), path)
 
 # --- bg.png / pic0.png : atmospheric backdrop ---
@@ -140,15 +166,12 @@ def make_bg(path, W=960, H=544):
     img = vgrad(W, H, (32, 34, 40), (15, 16, 19)).convert("RGBA")
     img.alpha_composite(glow((W, H), W * 0.50, H * 0.32, H * 0.72, BLURPLE, 30))  # soft halo
 
-    # faint oversized speech bubbles off the top-right and right edge
-    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ld = ImageDraw.Draw(lay)
-    bubble(ld, [W * 0.76, -H * 0.14, W * 1.20, H * 0.30], BLURPLE + (255,), radius=int(H * 0.14), tail='left')
-    bubble(ld, [W * 0.88, H * 0.44, W * 1.28, H * 0.82], BLURPLE_L + (255,), radius=int(H * 0.14), tail='left')
-    lay.putalpha(lay.getchannel("A").point(lambda a: int(a * 0.08)))
-    img.alpha_composite(lay)
+    # Faint oversized Vita-Clyde watermark off the top-right
+    wm = clyde_mark(W * 0.44, BLURPLE)
+    wm.putalpha(wm.getchannel("A").point(lambda a: int(a * 0.08)))
+    img.alpha_composite(wm, (int(W * 0.72), -int(H * 0.10)))
 
-    # Lower-left identity lockup: app-icon tile + wordmark + subtitle.
+    # Lower-left identity lockup: app-icon tile + Ginto Nord Black wordmark + subtitle.
     s = int(H * 0.15)
     ix, iy = int(W * 0.055), int(H * 0.70)
     sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -158,8 +181,8 @@ def make_bg(path, W=960, H=544):
     img.alpha_composite(logo_tile(s), (ix, iy))
     d = ImageDraw.Draw(img, "RGBA")
     tx = ix + s + int(W * 0.022)
-    d.text((tx, iy + s * 0.36), "Cordless", font=semi(int(H * 0.088)), fill=WHITE, anchor="lm")
-    d.text((tx, iy + s * 0.76), "Discord for PS Vita", font=reg(int(H * 0.045)),
+    d.text((tx, iy + s * 0.34), "Cordless", font=ginto(int(H * 0.080)), fill=WHITE, anchor="lm")
+    d.text((tx, iy + s * 0.78), "Discord for PS Vita", font=reg(int(H * 0.045)),
            fill=MUTED, anchor="lm")
     save_indexed(img, path)
 
